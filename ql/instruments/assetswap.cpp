@@ -24,6 +24,7 @@
 #include <ql/cashflows/fixedratecoupon.hpp>
 #include <ql/cashflows/iborcoupon.hpp>
 #include <ql/cashflows/simplecashflow.hpp>
+#include <ql/cashflows/overnightindexedcoupon.hpp>
 #include <ql/instruments/assetswap.hpp>
 #include <ql/pricingengines/swap/discountingswapengine.hpp>
 #include <utility>
@@ -266,6 +267,120 @@ namespace QuantLib {
         } else {
             payer_[0]=+1.0;
             payer_[1]=-1.0;
+        }
+    }
+
+    AssetSwap::AssetSwap(ext::shared_ptr<Bond> bond,
+                         Real bondCleanPrice,
+                         const ext::shared_ptr<IborIndex>& benchmarkIndex,
+                         Real nonParRepayment,
+                         Real gearing,
+                         Spread spread,
+                         const Schedule& floatSchedule,
+                         const DayCounter& floatingDayCounter,
+                         bool parAssetSwap,
+                         bool payBondCoupon)
+    : Swap(2), bond_(std::move(bond)), bondCleanPrice_(bondCleanPrice),
+      nonParRepayment_(nonParRepayment), spread_(spread), parSwap_(parAssetSwap),
+      fairSpread_(Null<Real>()), fairCleanPrice_(Null<Real>()), fairNonParRepayment_(Null<Real>()) {
+
+        Schedule schedule = floatSchedule;
+        if (floatSchedule.empty())
+            schedule =
+                Schedule(bond_->settlementDate(), bond_->maturityDate(), benchmarkIndex->tenor(),
+                         benchmarkIndex->fixingCalendar(), benchmarkIndex->businessDayConvention(),
+                         benchmarkIndex->businessDayConvention(), DateGeneration::Backward,
+                                false); // endOfMonth
+
+        // the following might become an input parameter
+        BusinessDayConvention paymentAdjustment = Following;
+
+        Date finalDate = schedule.calendar().adjust(schedule.endDate(), paymentAdjustment);
+        Date adjBondMaturityDate =
+            schedule.calendar().adjust(bond_->maturityDate(), paymentAdjustment);
+
+        QL_REQUIRE(finalDate == adjBondMaturityDate,
+                   "adjusted schedule end date ("
+                       << finalDate << ") must be equal to adjusted bond maturity date ("
+                       << adjBondMaturityDate << ")");
+
+        // bondCleanPrice must be the (forward) clean price
+        // at the floating schedule start date
+        upfrontDate_ = schedule.startDate();
+        Real dirtyPrice = bondCleanPrice_ + bond_->accruedAmount(upfrontDate_);
+
+        Real notional = bond_->notional(upfrontDate_);
+        /* In the market asset swap, the bond is purchased in return for
+           payment of the full price. The notional of the floating leg is
+           then scaled by the full price. */
+        if (!parSwap_)
+            notional *= dirtyPrice / 100.0;
+
+        // check if benchmark index is ibor or ois 
+        if (auto benchmarkOisIndex = ext::dynamic_pointer_cast<OvernightIndex>(benchmarkIndex)) {
+            OvernightLeg oisLeg = OvernightLeg(schedule, benchmarkOisIndex)
+                                       .withNotionals(notional)
+                                       .withPaymentAdjustment(paymentAdjustment)
+                                       .withSpreads(spread);
+            if (gearing != Null<Real>())
+                oisLeg = oisLeg.withGearings(gearing);
+            if (floatingDayCounter != DayCounter())
+                oisLeg = oisLeg.withPaymentDayCounter(floatingDayCounter);
+            legs_[1] = oisLeg;
+        } else {
+            IborLeg iborLeg = IborLeg(schedule, benchmarkIndex)
+                                  .withNotionals(notional)
+                                  .withPaymentAdjustment(paymentAdjustment)
+                                  .withSpreads(spread);
+            if (gearing != Null<Real>())
+                iborLeg = iborLeg.withGearings(gearing);
+            if (floatingDayCounter != DayCounter())
+                iborLeg = iborLeg.withPaymentDayCounter(floatingDayCounter);
+            legs_[1] = iborLeg;
+        }
+
+        for (Leg::const_iterator i = legs_[1].begin(); i < legs_[1].end(); ++i)
+            registerWith(*i);
+
+        const Leg& bondLeg = bond_->cashflows();
+        for (auto i = bondLeg.begin(); i < bondLeg.end(); ++i) {
+            // whatever might be the choice for the discounting engine
+            // bond flows on upfrontDate_ must be discarded
+            bool upfrontDateBondFlows = false;
+            if (!(*i)->hasOccurred(upfrontDate_, upfrontDateBondFlows))
+                legs_[0].push_back(*i);
+        }
+
+        QL_REQUIRE(!legs_[0].empty(), "empty bond leg to start with");
+
+        // special flows
+        if (parSwap_) {
+            // upfront on the floating leg
+            Real upfront = (dirtyPrice - 100.0) / 100.0 * notional;
+            ext::shared_ptr<CashFlow> upfrontCashFlow(new SimpleCashFlow(upfront, upfrontDate_));
+            legs_[1].insert(legs_[1].begin(), upfrontCashFlow);
+            // backpayment on the floating leg
+            // (accounts for non-par redemption, if any)
+            Real backPayment = notional;
+            ext::shared_ptr<CashFlow> backPaymentCashFlow(
+                new SimpleCashFlow(backPayment, finalDate));
+            legs_[1].push_back(backPaymentCashFlow);
+        } else {
+            // final notional exchange
+            ext::shared_ptr<CashFlow> finalCashFlow(new SimpleCashFlow(notional, finalDate));
+            legs_[1].push_back(finalCashFlow);
+        }
+
+        QL_REQUIRE(!legs_[0].empty(), "empty bond leg");
+        for (Leg::const_iterator i = legs_[0].begin(); i < legs_[0].end(); ++i)
+            registerWith(*i);
+
+        if (payBondCoupon) {
+            payer_[0] = -1.0;
+            payer_[1] = +1.0;
+        } else {
+            payer_[0] = +1.0;
+            payer_[1] = -1.0;
         }
     }
 

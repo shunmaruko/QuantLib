@@ -36,6 +36,7 @@
 #include <ql/time/daycounters/actualactual.hpp>
 #include <ql/time/daycounters/simpledaycounter.hpp>
 #include <ql/indexes/ibor/euribor.hpp>
+#include <ql/indexes/ibor/eonia.hpp>
 #include <ql/indexes/swapindex.hpp>
 #include <ql/cashflows/fixedratecoupon.hpp>
 #include <ql/cashflows/iborcoupon.hpp>
@@ -62,6 +63,7 @@ namespace asset_swap_test {
     struct CommonVars {
         // common data
         ext::shared_ptr<IborIndex> iborIndex;
+        ext::shared_ptr<OvernightIndex> oisIndex;
         ext::shared_ptr<SwapIndex> swapIndex;
         ext::shared_ptr<IborCouponPricer> pricer;
         ext::shared_ptr<CmsCouponPricer> cmspricer;
@@ -79,8 +81,8 @@ namespace asset_swap_test {
             compounding = Continuous;
             Frequency fixedFrequency = Annual;
             Frequency floatingFrequency = Semiannual;
-            iborIndex = ext::shared_ptr<IborIndex>(
-                     new Euribor(Period(floatingFrequency), termStructure));
+            iborIndex = ext::make_shared<Euribor>(Period(floatingFrequency), termStructure);
+            oisIndex = ext::make_shared<Eonia>(termStructure);
             Calendar calendar = iborIndex->fixingCalendar();
             swapIndex= ext::make_shared<SwapIndex>(
                 "EuriborSwapIsdaFixA", 10*Years, swapSettlementDays,
@@ -4252,6 +4254,52 @@ BOOST_AUTO_TEST_CASE(testSpecializedBondVsGenericBondUsingAsw) {
                     << std::scientific << std::setprecision(2)
                     << "\n  error:                 " << error16
                     << "\n  tolerance:             " << tolerance);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(testIborVsOis) {
+    BOOST_TEST_MESSAGE("Testing consistency between ibor index and overnight index ...");
+
+    using namespace asset_swap_test;
+
+    CommonVars vars;
+
+    Calendar bondCalendar = TARGET();
+    Natural settlementDays = 3;
+
+    // Fixed Underlying bond (Isin: DE0001135275 DBR 4 01/04/37)
+    // maturity doesn't occur on a business day
+
+    Schedule bondSchedule(Date(4, January, 2005), Date(4, January, 2037), Period(Annual),
+                          bondCalendar, Unadjusted, Unadjusted, DateGeneration::Backward, false);
+    ext::shared_ptr<Bond> bond(new FixedRateBond(
+        settlementDays, vars.faceAmount, bondSchedule, std::vector<Rate>(1, 0.04),
+        ActualActual(ActualActual::ISDA), Following, 100.0, Date(4, January, 2005)));
+
+    bool payFixedRate = true;
+    Real bondPrice = 95.0;
+
+    bool isPar = true;
+    AssetSwap assetSwapIbor(payFixedRate, bond, bondPrice, vars.iborIndex, vars.spread, Schedule(),
+                           vars.iborIndex->dayCounter(), isPar);
+
+    ext::shared_ptr<PricingEngine> swapEngine(new DiscountingSwapEngine(
+        vars.termStructure, true, bond->settlementDate(), Settings::instance().evaluationDate()));
+
+    assetSwapIbor.setPricingEngine(swapEngine);
+    Real fairCleanPrice = assetSwapIbor.fairCleanPrice();
+    Spread fairSpread = assetSwapIbor.fairSpread();
+
+    Real tolerance = 1.0e-10;
+
+    AssetSwap assetSwapOis(payFixedRate, bond, bondPrice, vars.oisIndex, vars.spread,
+                        Schedule(), vars.oisIndex->dayCounter(), isPar);
+    assetSwapOis.setPricingEngine(swapEngine);
+    if (std::fabs(assetSwapIbor.NPV()-assetSwapOis.NPV()) > tolerance) {
+        BOOST_FAIL("\n Ibor-referenced and Ois-referenced asset swap prices do not match: "
+                   << std::fixed << std::setprecision(13) << "\n  clean price:      " << bondPrice
+                   << "\n  NPV(Ibor-referenced):" << assetSwapIbor.NPV() << "\n  NPV(Ois-referenced):"
+                   << assetSwapOis.NPV() << "\n  tolerance:        " << tolerance);
     }
 }
 
