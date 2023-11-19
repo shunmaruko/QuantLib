@@ -56,7 +56,7 @@ namespace QuantLib {
         AssetSwap(bool payBondCoupon,
                   ext::shared_ptr<Bond> bond,
                   Real bondCleanPrice,
-                  const ext::shared_ptr<IborIndex>& iborIndex,
+                  const ext::shared_ptr<IborIndex>& benchmarkIndex,
                   Spread spread,
                   const Schedule& floatSchedule = Schedule(),
                   const DayCounter& floatingDayCount = DayCounter(),
@@ -67,22 +67,12 @@ namespace QuantLib {
                   Real bondCleanPrice,
                   Real nonParRepayment,
                   Real gearing,
-                  const ext::shared_ptr<IborIndex>& iborIndex,
+                  const ext::shared_ptr<IborIndex>& benchmarkIndex,
                   Spread spread = 0.0,
                   const DayCounter& floatingDayCount = DayCounter(),
                   Date dealMaturity = Date(),
                   bool payBondCoupon = false);
 
-        AssetSwap(ext::shared_ptr<Bond> bond,
-                  Real bondCleanPrice,
-                  const ext::shared_ptr<IborIndex>& benchmarkIndex,
-                  Real nonParRepayment = 100.0,
-                  Real gearing = Null<Real>(),
-                  Spread spread = 0.0,
-                  const Schedule& floatSchedule = Schedule(),
-                  const DayCounter& floatingDayCounter = DayCounter(),
-                  bool parAssetSwap = true,
-                  bool payBondCoupon = false);
         // results
         Spread fairSpread() const;
         Real floatingLegBPS() const;
