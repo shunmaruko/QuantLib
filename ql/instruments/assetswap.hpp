@@ -100,7 +100,7 @@ namespace QuantLib {
         bool parSwap_;
         Date upfrontDate_;
         // results
-        mutable Spread fairSpread_ ;
+        mutable Spread fairSpread_;
         mutable Real fairCleanPrice_, fairNonParRepayment_;
     };
 

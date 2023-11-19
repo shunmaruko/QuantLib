@@ -4287,8 +4287,6 @@ BOOST_AUTO_TEST_CASE(testIborVsOis) {
         vars.termStructure, true, bond->settlementDate(), Settings::instance().evaluationDate()));
 
     assetSwapIbor.setPricingEngine(swapEngine);
-    Real fairCleanPrice = assetSwapIbor.fairCleanPrice();
-    Spread fairSpread = assetSwapIbor.fairSpread();
 
     Real tolerance = 1.0e-10;
 
